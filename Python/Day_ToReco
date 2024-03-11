@@ -1,0 +1,124 @@
+import rioxarray
+import geopandas as gpd
+import numpy as np
+from geocube.api.core import make_geocube
+import pandas as pd
+"""
+source the working functions script 
+"""
+exec(open('F:/Fire_Recovery/Code_Workflow/Python/Working_Functions.py').read())
+#check that maks_season is in the namespace return error if not
+'mask_season' in locals()
+"""
+Read in large fire database and the disturbance raster
+"""
+#save location 
+out = 'F:/Fire_Recovery'
+#load national large fire database (fires > 200 ha)
+nlfd = gpd.read_file('F:/Fire_Recovery/NLFD/NFDB_poly_20210707_large_fires.shp')
+# read in dist raster (NTEMS Greatest Change Year 1986-2022)
+source = '//Frst-frm-2232b/g/sarah/mosaiced'
+dist = rioxarray.open_rasterio(source+'/change_metrics/SRef_Greatest_Change_Year.dat')
+## read in the regrowth raster
+regrowth = rioxarray.open_rasterio(source +'/change_metrics/SRef_PostChange_evolution_rate.dat')
+
+years = np.unique(dist.values)
+## concatenate 3 columns: year, month and day into one data.time column 
+# subset month and day so that they are greater than zero
+nlfd['FIRE_DATE'] = nlfd['YEAR'].astype(str) + '-' + nlfd['MONTH'].astype(str) +'-' + nlfd['DAY'].astype(str)
+## subset to values that have month recordings 
+nlfd_rec = nlfd[nlfd['DAY'] > 0]
+nlfd_rec.loc[:, 'FIRE_DATE'] = pd.to_datetime(nlfd_rec['FIRE_DATE'])
+nlfd_rec.loc[:, 'DOY'] = nlfd_rec['FIRE_DATE'].dt.dayofyear
+#change the coordinate system of the shapefile to match the raster
+nlfd_crs = nlfd_rec.to_crs(dist.rio.crs)
+# check the crs of the shapefile and the raster are the same 
+nlfd_crs.crs == dist.rio.crs
+
+"""
+Mask by day and get the recovery values for each month
+"""
+np.unique(nlfd_crs['DOY'])
+## count the proportions that has not DOY observations
+nlfd_crs['DOY'].isna().sum()/len(nlfd_crs['DOY'])
+### get the names of nlfd
+nlfd_crs.columns
+# create a list for days of the year
+doy = list(range(1,356))
+## subset nlfd to day 156 
+nlfd_day = nlfd_crs[nlfd_crs['DOY'] == 156]
+nlfd_day = nlfd_crs[nlfd_crs['DOY']] == 156
+ # USing geocube turn the nlfd_day into a raster
+nlfd_day = make_geocube(vector_data=nlfd_day,
+                        measurements=["YEAR"], like=dist)   # convert to a xarray dataarray and round values to the nearest year
+nlfd_year = nlfd_day.YEAR.round()
+#Mask out values in dist that are not equal to the year in nlfd_year
+dist_mask = dist.where(dist == nlfd_year)
+
+def mask_day(nlfd_in, dist, day):
+    #filter shapefile to a subset of months defined in the function
+    nlfd_day = nlfd_in[nlfd_in['DOY'] == day]
+    # turn this into a raster with values from YEAR in the shapefile
+    # USing geocube turn the nlfd_day into a raster
+    nlfd_day = make_geocube(vector_data=nlfd_day, 
+                               measurements=["YEAR"], like=dist)
+    # convert to a xarray dataarray and round values to the nearest year
+    nlfd_year = nlfd_day.YEAR.round()
+    #Mask out values in dist that are not equal to the year in nlfd_year
+    dist_mask = dist.where(dist == nlfd_year)
+    return dist_mask
+
+
+regrowth_day_list = []
+for day in doy:
+     print(day)
+     mask = mask_day(nlfd_crs, dist, day)
+     regrowth_day = regrowth.where(mask.notnull(), other = np.nan)
+     #turn the raster into a numpy array
+     regrowth_day_v = regrowth_day.values
+    #remove the nan values
+     regrowth_day_v = regrowth_day_v[~np.isnan(regrowth_day_v)]
+    ## add day of the year to the dataframe
+     regrowth_day_v['DOY'] = day
+     # add to a list of dataframes
+     regrowth_day_list.append(regrowth_day_v)
+
+"""
+REGROWTH 
+Create Monthly Averages, standard deviations and counts in a tidy dataframe
+"""
+ #create an empty dataframe
+recovery_by_month = pd.DataFrame()
+
+# for each month in the list of months mask the regrowth raster to the month 
+# and calculate the mean, standard deviation and count of the values
+for month in months:
+    #read in the mask for disturbance 
+    mask = rioxarray.open_rasterio(out + '/GYC_masks/months/'+ utm + 'month_' + str(month) + '.tif')
+    #mask the regrowth raster to the month
+    regrowth = rioxarray.open_rasterio(source + '/UTM_' + utm
+                                    +'/Results/Change_metrics/SRef_10S_PostChange_evolution_rate.dat')
+    regrowth_month = regrowth.where(mask.notnull(), other = np.nan)
+    #turn the raster into a numpy array
+    regrowth_month_v = regrowth_month.values
+    #remove the nan values
+    regrowth_month_v = regrowth_month_v[~np.isnan(regrowth_month_v)]
+    #calculate the mean, standard deviation and count of the values
+    mean = regrowth_month_v.mean()
+    std = regrowth_month_v.std()
+    count = regrowth_month_v.size
+    #add these values to the dataframe
+    recovery_by_month = recovery_by_month.concat({'Month': month, 'Mean': mean,
+                                                   'Std': std, 'Count': count}, 
+                                                   ignore_index=True)
+
+
+recovery_by_month["SEM"] = recovery_by_month["Std"] / np.sqrt(recovery_by_month["Count"])
+
+# create a grouped bar plot of the mean with  error bars of standard deviation
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+recovery_by_month.plot(x='Month', y='Mean', kind='bar', yerr='SEM', ax=ax)
+## label the y axis
+plt.ylabel('Mean Regrowth Rate')
+plt.show()

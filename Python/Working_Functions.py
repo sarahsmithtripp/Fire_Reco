@@ -131,3 +131,20 @@ def season_metrics(file_list, seasons):
     # concatenate all metric dataframes into a single dataframe
     metrics_out = pd.concat(metrics_out, ignore_index=True)
     return metrics_out
+
+"""
+calculate a mask for each day of the year
+"""
+def mask_day(nlfd_in, dist, day):
+    #filter shapefile to a subset of months defined in the function
+    nlfd_day = nlfd_in[nlfd_in['DOY'] == day]
+    # turn this into a raster with values from YEAR in the shapefile
+    # USing geocube turn the nlfd_day into a raster
+    nlfd_day = make_geocube(vector_data=nlfd_day, 
+                               measurements=["YEAR"], like=dist)
+    # convert to a xarray dataarray and round values to the nearest year
+    nlfd_year = nlfd_day.YEAR.round()
+    #Mask out values in dist that are not equal to the year in nlfd_year
+    dist_mask = dist.where(dist == nlfd_year)
+    return dist_mask
+
