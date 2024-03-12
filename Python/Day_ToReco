@@ -52,19 +52,24 @@ def mask_day(nlfd_in, dist, day):
     # turn this into a raster with values from YEAR in the shapefile
     # USing geocube turn the nlfd_day into a raster
     nlfd_day = make_geocube(vector_data=nlfd_day, 
-                               measurements=["YEAR"], like=dist)
-    # convert to a xarray dataarray and round values to the nearest year
+                            measurements=["YEAR"], like=dist, 
+                            fill = 0)
+    # expand to make a binary raster with the number of years 
+    nlfd_exp = nlfd_day.expand_dims(dim = 'YEAR')
+    regrowth_masked = regrowt
     nlfd_year = nlfd_day.YEAR.round()
-    # convert to a binary mask when nlfd_year does not equal dist year
-    dist_mask = dist.where(nlfd_year == dist, other = 0)
-    return dist_mask
+    # # convert to a binary mask when nlfd_year does not equal dist year
+    dist_late = dist - 1
+    dist_mask = dist.where(nlfd_year == dist or nlfd == dist_late, other = 0)
+    regrowth_dist_mask = regrowth_masked.where(dist_mask != 0, other = -999)
+    dist_mask.rio.to_raster('D:/C2C_Updated/test.tif')
+    return nlfd_day
 
 regrowth_day_list = []
 for day in doy:
      print(day)
      mask = mask_day(nlfd_crs, dist, day)
      #write mask to a file 
-     mask.rio.to_raster('D:/C2C_Updated/Indices/NBR/test.tif')
      regrowth_day = regrowth.where(mask(), other = np.nan)
      #turn the raster into a numpy array
      regrowth_day_v = regrowth_day.values
